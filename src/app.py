@@ -1,23 +1,38 @@
 import marimo
 
-__generated_with = "0.10.12"
+__generated_with = "0.11.13"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
     import marimo as mo
-
-    mo.md("Hello")
-    return (mo,)
+    import pandas as pd
+    import utils
+    return mo, pd, utils
 
 
 @app.cell
-def test_cell():
-    from utils import add
+def _(utils):
+    utils.download_sample_metadata("SRP115307")
+    return
 
-    assert add(1, 2) == 3
-    assert 2 == 2
+
+@app.cell
+def _(utils):
+    utils.download_project_metadata("SRP115307")
+    return
+
+
+@app.cell
+def _(utils):
+    utils.download_gene_metadata(species="mouse")
+    return
+
+
+@app.cell
+def _(utils):
+    utils.get_cache_info("samples")
     return
 
 

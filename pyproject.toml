@@ -1,8 +1,12 @@
 [project]
-description = "A starter template for marimo notebooks with uv"
-name = "marimo-template"
+description = "Analyzing gene-level RNA-seq data from recount3 with a marimo notebook"
+name = "mariner"
 requires-python = ">=3.12"
-version = "0.1.0"
+version = "0.0.1"
+dependencies = [
+    "marimo[recommended]>=0.11.13",
+    "polars>=1.23.0",
+]
 
 [dependency-groups]
 dev = [
