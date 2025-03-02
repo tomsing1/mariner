@@ -1,6 +1,11 @@
 import pandas as pd
 from functools import lru_cache
 
+ORGANISMS = {
+  "Mus musculus": "mouse",
+  "Homo sapiens": "human"
+}
+
 GENE_ANNOTATIONS = {
     "mouse": "M023",
     "human": "G026",
@@ -73,14 +78,14 @@ def download_project_metadata(srp: str, species: str = "mouse") -> pd.DataFrame:
 
 
 @lru_cache(maxsize=10)
-def download_gene_metadata(species: str = "mouse") -> pd.DataFrame:
+def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
     """
     Download and parse gene annotations for a specific species.
 
     Parameters
     ----------
-    species : str, optional
-        Species name, either 'mouse' or 'human' (default: 'mouse')
+    organism : str, optional
+        Species name, either 'Mus musculue' or 'Homo sapiens' (default: 'Mus musculus')
 
     Returns
     -------
@@ -104,21 +109,27 @@ def download_gene_metadata(species: str = "mouse") -> pd.DataFrame:
         If species is not in the supported GENE_ANNOTATIONS
     """
     try:
-        version = GENE_ANNOTATIONS[species]
+        species = ORGANISMS[organism]
     except KeyError:
-        print(f"Species {species} is not available.")
+        print(f"Organism {organism} is not available.")
         raise
 
+    try:
+        annotation = GENE_ANNOTATIONS[species]
+    except KeyError:
+        print(f"Annotation for species {species} is not available.")
+        raise
+
+    url = (
+        f"https://duffel.rail.bio/recount3/{species}/annotations/gene_sums/"
+        f"{species}.gene_sums.{annotation}.gtf.gz"
+    )
     def extract_value(s, key):
         for item in s:
             if key in item:
                 return item.split()[1].replace('"', "")
         return None
 
-    url = (
-        f"https://duffel.rail.bio/recount3/{species}/annotations/gene_sums/"
-        f"{species}.gene_sums.{version}.gtf.gz"
-    )
     gene_anno = pd.read_csv(
         url,
         delimiter="\t",
