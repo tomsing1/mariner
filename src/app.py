@@ -9,7 +9,22 @@ def _():
     import marimo as mo
     import pandas as pd
     import utils
-    return mo, pd, utils
+
+    from pydeseq2.dds import DeseqDataSet
+    from pydeseq2.default_inference import DefaultInference
+    from pydeseq2.ds import DeseqStats
+    from anndata import AnnData
+    import numpy as np
+    return (
+        AnnData,
+        DefaultInference,
+        DeseqDataSet,
+        DeseqStats,
+        mo,
+        np,
+        pd,
+        utils,
+    )
 
 
 @app.cell
@@ -100,7 +115,6 @@ def _(project):
 def _(organism, utils):
     genes = utils.download_gene_metadata(organism=organism)
     genes = genes.set_index("gene_id", drop=False)
-    genes.head()
     return (genes,)
 
 
@@ -113,68 +127,94 @@ def _(utils):
 
 @app.cell
 def _():
-    from pydeseq2.dds import DeseqDataSet
-    from pydeseq2.default_inference import DefaultInference
-    from pydeseq2.ds import DeseqStats
-    from anndata import AnnData
-    import numpy as np
-    return AnnData, DefaultInference, DeseqDataSet, DeseqStats, np
+    return
 
 
 @app.cell
-def _(counts, genes, samples_expanded):
-    metadata = samples_expanded.loc[counts.columns]
-    metadata["condition"] = metadata.gender
-    keep_samples = ~metadata.condition.isna()
-    metadata = metadata.loc[keep_samples]
+def _(
+    AnnData,
+    DefaultInference,
+    DeseqDataSet,
+    counts,
+    genes,
+    samples_expanded,
+):
+    def _(counts, samples, genes):
+        # subset samples by excluding missing values in the `gender` column
+        metadata = samples.loc[counts.columns]
+        metadata["condition"] = metadata.gender
+        keep_samples = ~metadata.condition.isna()
+        metadata = metadata.loc[keep_samples]
 
-    annotated_genes = list(set(counts.index).intersection(genes.index))
-    genes2 = genes.loc[annotated_genes]
+        # subset genes to those that are annotated as 'protein_coding'
+        annotated_genes = list(set(counts.index).intersection(genes.index))
+        genes = genes.loc[annotated_genes]
+        genes = genes.loc[genes.gene_type == "protein_coding"]
 
-    m = counts.loc[annotated_genes].to_numpy().T
-    m = m[keep_samples.tolist(), :]
-    return annotated_genes, genes2, keep_samples, m, metadata
+        # coerce the counts data.frame to a numpy array for faster transposition
+        m = counts.loc[genes.index].to_numpy().T
+        m = m[keep_samples.tolist(), :]
+
+        inference = DefaultInference(n_cpus=4)
+        dds = DeseqDataSet(
+            adata=AnnData(X=m, obs=metadata, var=genes),
+            design="~condition",
+            refit_cooks=True,
+            inference=inference,
+        )
+        dds.deseq2()
+        return dds
 
 
-@app.cell
-def _(DefaultInference, DeseqDataSet, genes, m, metadata):
-    inference = DefaultInference(n_cpus=4)
-    dds = DeseqDataSet(
-        counts=m,
-        metadata=metadata,
-        design="~condition",
-        refit_cooks=True,
-        inference=inference,
-    )
-    dds.vars = genes
-    dds.deseq2()
+    dds = _(counts=counts, samples=samples_expanded, genes=genes)
     dds
-    return dds, inference
+    return (dds,)
 
 
 @app.cell
-def _(DeseqStats, dds, inference):
+def _(DeseqStats, dds):
     ds = DeseqStats(
-        dds, contrast=["condition", "male", "female"], inference=inference
+        dds, contrast=["condition", "male", "female"], cooks_filter=True
     )
     ds.summary()
     return (ds,)
 
 
 @app.cell
-def _(ds, pd):
-    df = pd.concat([ds.dds.vars.reset_index(drop=True), 
-                    ds.results_df.reset_index()], axis=1)
-    df = df[~df.pvalue.isna()]
-    df = df.sort_values("pvalue", ascending=True)
-    df
-    return (df,)
+def _(mo):
+    mo.md(
+        """
+        ### Independent filtering
+
+
+        """
+    )
+    return
 
 
 @app.cell
-def _(ds):
-    ds.dds.vars.shape
-    return
+def _(ds, mo, pd):
+    df = pd.concat(
+        [
+            ds.dds.var[["gene_name", "seqname"]],
+            ds.results_df,
+        ],
+        axis=1,
+    )
+    df = df[~df.pvalue.isna()]
+    df = df.sort_values("pvalue", ascending=True)
+    df = df.round(
+        {
+            "baseMean": 1,
+            "log2FoldChange": 1,
+            "lfcSE": 2,
+            "stat": 1,
+            "pvalue": 10,
+            "padj": 10,
+        }
+    )
+    mo.ui.table(df, show_column_summaries=True)
+    return (df,)
 
 
 if __name__ == "__main__":
