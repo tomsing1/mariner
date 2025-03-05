@@ -12,7 +12,7 @@ def _():
     return mo, pd, utils
 
 
-@app.cell(disabled=True)
+@app.cell
 def _(utils):
     samples = utils.download_sample_metadata("SRP115307")
     samples
@@ -58,7 +58,8 @@ def _(pd, samples):
 
     # Apply the function to create a new dataframe with split attributes
     attributes_df = pd.DataFrame(
-        [split_attributes(row) for row in samples["sample_attributes"]]
+        [split_attributes(row) for row in samples["sample_attributes"]],
+        index=samples.index,
     )
 
     # Drop columns with constant values
@@ -66,7 +67,6 @@ def _(pd, samples):
         col for col in attributes_df.columns if attributes_df[col].nunique() == 1
     ]
     attributes_df.drop(columns=single_value_cols, inplace=True)
-
     samples_expanded = pd.concat(
         [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
     )
@@ -98,13 +98,82 @@ def _(project):
 
 @app.cell
 def _(organism, utils):
-    utils.download_gene_metadata(organism=organism)
-    return
+    genes = utils.download_gene_metadata(organism=organism)
+    genes = genes.set_index("gene_id", drop=False)
+    genes.head()
+    return (genes,)
 
 
 @app.cell
 def _(utils):
-    utils.get_cache_info("samples")
+    counts = utils.download_counts("SRP115307")
+    counts.head()
+    return (counts,)
+
+
+@app.cell
+def _():
+    from pydeseq2.dds import DeseqDataSet
+    from pydeseq2.default_inference import DefaultInference
+    from pydeseq2.ds import DeseqStats
+    from anndata import AnnData
+    import numpy as np
+    return AnnData, DefaultInference, DeseqDataSet, DeseqStats, np
+
+
+@app.cell
+def _(counts, genes, samples_expanded):
+    metadata = samples_expanded.loc[counts.columns]
+    metadata["condition"] = metadata.gender
+    keep_samples = ~metadata.condition.isna()
+    metadata = metadata.loc[keep_samples]
+
+    annotated_genes = list(set(counts.index).intersection(genes.index))
+    genes2 = genes.loc[annotated_genes]
+
+    m = counts.loc[annotated_genes].to_numpy().T
+    m = m[keep_samples.tolist(), :]
+    return annotated_genes, genes2, keep_samples, m, metadata
+
+
+@app.cell
+def _(DefaultInference, DeseqDataSet, genes, m, metadata):
+    inference = DefaultInference(n_cpus=4)
+    dds = DeseqDataSet(
+        counts=m,
+        metadata=metadata,
+        design="~condition",
+        refit_cooks=True,
+        inference=inference,
+    )
+    dds.vars = genes
+    dds.deseq2()
+    dds
+    return dds, inference
+
+
+@app.cell
+def _(DeseqStats, dds, inference):
+    ds = DeseqStats(
+        dds, contrast=["condition", "male", "female"], inference=inference
+    )
+    ds.summary()
+    return (ds,)
+
+
+@app.cell
+def _(ds, pd):
+    df = pd.concat([ds.dds.vars.reset_index(drop=True), 
+                    ds.results_df.reset_index()], axis=1)
+    df = df[~df.pvalue.isna()]
+    df = df.sort_values("pvalue", ascending=True)
+    df
+    return (df,)
+
+
+@app.cell
+def _(ds):
+    ds.dds.vars.shape
     return
 
 

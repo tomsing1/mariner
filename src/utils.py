@@ -8,10 +8,41 @@ ORGANISMS = {
 
 GENE_ANNOTATIONS = {
     "mouse": "M023",
-    "human": "G026",
-    "Mus musculus": "M023",
-    "Homo sapiens": "G026",
+    "human": "G026"
 }
+
+
+@lru_cache(maxsize=5)
+def download_counts(srp: str, species: str = "mouse") -> pd.DataFrame:
+    """
+    Download and raw counts for a specific SRA project.
+
+    Parameters
+    ----------
+    srp : str
+        SRA project ID (e.g., 'SRP115307')
+    species : str, optional
+        Species name, either 'mouse' or 'human' (default: 'mouse')
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing gene-level counts with
+        one column for each run (SRR) in the dataset
+
+    Raises
+    ------
+    AssertionError
+        If species is not in the supported GENE_ANNOTATIONS
+    """
+
+    assert species in GENE_ANNOTATIONS
+    url = (
+        f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/" 
+        f"gene_sums/{srp[-2:]}/{srp}/sra.gene_sums.SRP115307.M023.gz"
+    )
+    counts = pd.read_csv(url, delimiter="\t", skiprows=2, index_col="gene_id")
+    return counts
 
 
 @lru_cache(maxsize=10)
@@ -42,7 +73,7 @@ def download_sample_metadata(srp: str, species: str = "mouse") -> pd.DataFrame:
         f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/"
         f"metadata/{srp[-2:]}/{srp}/sra.sra.{srp}.MD.gz"
     )
-    sample_anno = pd.read_csv(url, delimiter="\t")
+    sample_anno = pd.read_csv(url, delimiter="\t", index_col="external_id")
     return sample_anno
 
 
@@ -73,7 +104,7 @@ def download_project_metadata(srp: str, species: str = "mouse") -> pd.DataFrame:
         f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/metadata/"
         f"{srp[-2:]}/{srp}/sra.recount_project.{srp}.MD.gz"
     )
-    sample_anno = pd.read_csv(url, delimiter="\t")
+    sample_anno = pd.read_csv(url, delimiter="\t", index_col="external_id")
     return sample_anno
 
 
@@ -145,7 +176,7 @@ def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
             "strand",
             "frame",
             "attribute",
-        ],
+        ]
     )
 
     # First split the attribute column into a list
@@ -162,6 +193,7 @@ def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
 
     # Drop the unnecessary columns
     gene_anno = gene_anno.drop(["attribute", "split_attribute"], axis=1)
+    gene_anno.set_index('gene_id', drop=False, inplace=True)
     return gene_anno
 
 
