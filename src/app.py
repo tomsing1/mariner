@@ -32,8 +32,17 @@ def _():
 
 
 @app.cell
-def _(utils):
-    samples = utils.download_sample_metadata("SRP115307")
+def _():
+    selected_project = "SRP115307"
+    return (selected_project,)
+
+
+@app.cell
+def _(mo, selected_project, utils):
+    with mo.status.spinner(
+        subtitle=f"Downloading sample information about project {selected_project} ..."
+    ) as _spinner:
+        samples = utils.download_sample_metadata(selected_project)
     return (samples,)
 
 
@@ -80,8 +89,11 @@ def _(pd, samples):
 
 
 @app.cell
-def _(utils):
-    project = utils.download_project_metadata("SRP115307")
+def _(mo, selected_project, utils):
+    with mo.status.spinner(
+        subtitle=f"Downloading information about project {selected_project} ..."
+    ) as _spinner:
+        project = utils.download_project_metadata(selected_project)
     return (project,)
 
 
@@ -100,15 +112,21 @@ def _(project):
 
 
 @app.cell
-def _(organism, utils):
-    genes = utils.download_gene_metadata(organism=organism)
-    genes = genes.set_index("gene_id", drop=False)
+def _(mo, organism, selected_project, utils):
+    with mo.status.spinner(
+        subtitle=f"Downloading gene annotations for project {selected_project}..."
+    ) as _spinner:
+        genes = utils.download_gene_metadata(organism=organism)
+        genes = genes.set_index("gene_id", drop=False)
     return (genes,)
 
 
 @app.cell
-def _(utils):
-    counts = utils.download_counts("SRP115307")
+def _(mo, selected_project, utils):
+    with mo.status.spinner(
+        subtitle=f"Downloading raw counts for project {selected_project} ..."
+    ) as _spinner:
+        counts = utils.download_counts(selected_project)
     return (counts,)
 
 
@@ -119,7 +137,9 @@ def _(
     DeseqDataSet,
     counts,
     genes,
+    mo,
     samples_expanded,
+    selected_project,
 ):
     def _(counts, samples, genes):
         # subset samples by excluding missing values in the `gender` column
@@ -148,16 +168,22 @@ def _(
         return dds
 
 
-    dds = _(counts=counts, samples=samples_expanded, genes=genes)
+    with mo.status.spinner(
+        subtitle=f"Fitting DESeq2 model for project {selected_project} ..."
+    ) as _spinner:
+        dds = _(counts=counts, samples=samples_expanded, genes=genes)
     return (dds,)
 
 
 @app.cell
-def _(DeseqStats, dds):
-    ds = DeseqStats(
-        dds, contrast=["condition", "male", "female"], cooks_filter=True
-    )
-    ds.summary()  # creates ds.results.df
+def _(DeseqStats, dds, mo, selected_project):
+    with mo.status.spinner(
+        subtitle=f"Extracting Wald test p-values for project {selected_project} ..."
+    ) as _spinner:
+        ds = DeseqStats(
+            dds, contrast=["condition", "male", "female"], cooks_filter=True
+        )
+        ds.summary()  # creates ds.results.df
     return (ds,)
 
 
@@ -296,13 +322,16 @@ def _(batch, dds, deseq2_norm, facet_wrap, scatter_plot, stat_table):
     def _():
         adata = dds.copy()
         adata.var = adata.var.set_index("gene_name", inplace=False, drop=False)
-        if batch.value["count_type"] == "Normalized":
-            adata.X = deseq2_norm(adata.X)[0]
-        ps = [
-            scatter_plot(adata=adata, gene=g, covariate=batch.value["covariate"])
-            for g in stat_table.value["gene_name"]
-        ]
-        return facet_wrap(ps, 3)
+        if batch.value:
+            if batch.value["count_type"] == "Normalized":
+                adata.X = deseq2_norm(adata.X)[0]
+            ps = [
+                scatter_plot(
+                    adata=adata, gene=g, covariate=batch.value["covariate"]
+                )
+                for g in stat_table.value["gene_name"]
+            ]
+            return facet_wrap(ps, 3)
 
 
     _()
