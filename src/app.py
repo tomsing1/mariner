@@ -1,25 +1,29 @@
 import marimo
 
-__generated_with = "0.11.13"
+__generated_with = "0.11.17"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
+    import altair as alt
     import marimo as mo
     import pandas as pd
+    import numpy as np
     import utils
 
+    from anndata import AnnData
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.default_inference import DefaultInference
     from pydeseq2.ds import DeseqStats
-    from anndata import AnnData
-    import numpy as np
+    from pydeseq2.preprocessing import deseq2_norm
     return (
         AnnData,
         DefaultInference,
         DeseqDataSet,
         DeseqStats,
+        alt,
+        deseq2_norm,
         mo,
         np,
         pd,
@@ -30,20 +34,7 @@ def _():
 @app.cell
 def _(utils):
     samples = utils.download_sample_metadata("SRP115307")
-    samples
     return (samples,)
-
-
-@app.cell
-def _(samples):
-    samples.sample_title
-    return
-
-
-@app.cell
-def _(samples):
-    samples.sample_attributes
-    return
 
 
 @app.cell
@@ -85,14 +76,12 @@ def _(pd, samples):
     samples_expanded = pd.concat(
         [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
     )
-    samples_expanded
     return attributes_df, samples_expanded, single_value_cols, split_attributes
 
 
 @app.cell
 def _(utils):
     project = utils.download_project_metadata("SRP115307")
-    project
     return (project,)
 
 
@@ -107,7 +96,6 @@ def _(project):
     organism = project.organism.unique()
     assert len(organism) == 1
     organism = organism[0]
-    organism
     return (organism,)
 
 
@@ -121,13 +109,7 @@ def _(organism, utils):
 @app.cell
 def _(utils):
     counts = utils.download_counts("SRP115307")
-    counts.head()
     return (counts,)
-
-
-@app.cell
-def _():
-    return
 
 
 @app.cell
@@ -167,7 +149,6 @@ def _(
 
 
     dds = _(counts=counts, samples=samples_expanded, genes=genes)
-    dds
     return (dds,)
 
 
@@ -176,19 +157,13 @@ def _(DeseqStats, dds):
     ds = DeseqStats(
         dds, contrast=["condition", "male", "female"], cooks_filter=True
     )
-    ds.summary()
+    ds.summary()  # creates ds.results.df
     return (ds,)
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        ### Independent filtering
-
-
-        """
-    )
+    mo.md("""### Independent filtering""")
     return
 
 
@@ -213,8 +188,125 @@ def _(ds, mo, pd):
             "padj": 10,
         }
     )
-    mo.ui.table(df, show_column_summaries=True)
-    return (df,)
+    stat_table = mo.ui.table(
+        df.reset_index(drop=True),
+        show_column_summaries=True,
+        selection="multi",
+        initial_selection=[1],
+        label="Differential expression results",
+    )
+    stat_table
+    return df, stat_table
+
+
+@app.cell(hide_code=True)
+def _(alt, pd):
+    def facet_wrap(subplts, plots_per_row):
+        rows = [
+            subplts[i : i + plots_per_row]
+            for i in range(0, len(subplts), plots_per_row)
+        ]
+        compound_chart = alt.hconcat()
+        for r in rows:
+            rowplot = alt.vconcat()  # start a new row
+            for item in r:
+                rowplot |= item  # add suplot to current row as a new column
+            compound_chart &= rowplot  # add the entire row of plots as a new row
+        return compound_chart
+
+
+    def scatter_plot(adata, gene, covariate, jitter_scale=(-1, 2)):
+        if gene in adata.var_names:
+            gene_idx = adata.var_names.get_loc(gene)
+        else:
+            raise ValueError(f"Gene {gene} not found in var_names.")
+        if not covariate in adata.obs_keys():
+            raise ValueError(f"Covariate {covariate} not found in obs_keys.")
+
+        _df = pd.DataFrame(
+            {
+                "normalized_counts": adata.X[:, gene_idx].flatten(),
+                covariate: adata.obs[covariate].values,
+            }
+        )
+        _df
+
+        chart = (
+            alt.Chart(_df)
+            .mark_point(filled=True, size=100)
+            .encode(
+                x=alt.X(
+                    f"{covariate}:N",
+                    axis=alt.Axis(
+                        title=covariate.title(),
+                        labelFontSize=12,
+                        titleFontSize=14,
+                    ),
+                ),
+                y=alt.Y(
+                    "normalized_counts:Q",
+                    axis=alt.Axis(
+                        title="Normalized counts",
+                        labelFontSize=12,
+                        titleFontSize=14,
+                    ),
+                ),
+                xOffset=alt.XOffset(
+                    "jitter:Q", scale=alt.Scale(domain=jitter_scale)
+                ),
+                color=alt.Color(f"{covariate}:N", legend=None),
+            )
+            .transform_calculate(jitter="random()")
+            .resolve_scale()
+            .properties(width=200, height=200)
+            .properties(
+                title=gene,
+            )
+            # .configure_title(fontSize=24)
+        )
+        return chart
+    return facet_wrap, scatter_plot
+
+
+@app.cell
+def _(dds, mo):
+    covariate = mo.ui.dropdown(
+        options=dds.obs_keys(),
+        value="condition" if "condition" in dds.obs_keys() else dds.obs_keys()[0],
+        label="",
+    )
+    normalized = mo.ui.radio(
+        options=["Normalized", "Raw"], value="Normalized", inline=True
+    )
+    markdown = mo.md(
+        """
+        - x-axis?: {covariate}
+        - y-axis: {count_type}
+        """
+    )
+    batch = mo.ui.batch(
+        markdown, {"covariate": covariate, "count_type": normalized}
+    ).form()
+    batch
+    return batch, covariate, markdown, normalized
+
+
+@app.cell
+def _(batch, dds, deseq2_norm, facet_wrap, scatter_plot, stat_table):
+    def _():
+        adata = dds.copy()
+        adata.var = adata.var.set_index("gene_name", inplace=False, drop=False)
+        if batch.value["count_type"] == "Normalized":
+            adata.X = deseq2_norm(adata.X)[0]
+        ps = [
+            scatter_plot(adata=adata, gene=g, covariate=batch.value["covariate"])
+            for g in stat_table.value["gene_name"]
+        ]
+        return facet_wrap(ps, 3)
+
+
+    _()
+    return
 
 
 if __name__ == "__main__":
