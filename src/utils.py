@@ -1,122 +1,130 @@
 import pandas as pd
+import re
+from dataclasses import dataclass
 from functools import lru_cache
 
-ORGANISMS = {
-  "Mus musculus": "mouse",
-  "Homo sapiens": "human"
+GENE_ANNOTATIONS = {
+  "M023": "mouse",
+  "G026": "human"
 }
 
-GENE_ANNOTATIONS = {
-    "mouse": "M023",
-    "human": "G026"
-}
+@dataclass
+class Project:
+    """Class for keeping track of project metadata."""
+    id: str
+    count_url: str
+    sample_url: str
+    project_url: str
 
 
 @lru_cache(maxsize=5)
-def download_counts(srp: str, species: str = "mouse") -> pd.DataFrame:
+def download_counts(url:str) -> pd.DataFrame:
     """
     Download and raw counts for a specific SRA project.
 
     Parameters
     ----------
-    srp : str
-        SRA project ID (e.g., 'SRP115307')
-    species : str, optional
-        Species name, either 'mouse' or 'human' (default: 'mouse')
+    url : str
+        The URL pointing to the recount3 gene counts CSV file.
 
     Returns
     -------
     pd.DataFrame
         DataFrame containing gene-level counts with
         one column for each run (SRR) in the dataset
-
-    Raises
-    ------
-    AssertionError
-        If species is not in the supported GENE_ANNOTATIONS
     """
 
-    assert species in GENE_ANNOTATIONS
-    url = (
-        f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/" 
-        f"gene_sums/{srp[-2:]}/{srp}/sra.gene_sums.SRP115307.M023.gz"
-    )
-    counts = pd.read_csv(url, delimiter="\t", skiprows=2, index_col="gene_id")
-    return counts
+    return pd.read_csv(url, delimiter="\t", skiprows=2, index_col="gene_id")
 
 
 @lru_cache(maxsize=10)
-def download_sample_metadata(srp: str, species: str = "mouse") -> pd.DataFrame:
+def download_metadata(url: str) -> pd.DataFrame:
     """
-    Download and parse sample metadata for a specific SRA project.
+    Download and parse sample or project metadata for a specific SRA project.
 
     Parameters
     ----------
-    srp : str
-        SRA project ID (e.g., 'SRP115307')
-    species : str, optional
-        Species name, either 'mouse' or 'human' (default: 'mouse')
+    url : str
+        The URL pointing to the recount3 sample or project metadata CSV file.
 
     Returns
     -------
     pd.DataFrame
-        DataFrame containing sample metadata with columns specific to the SRA project
-
-    Raises
-    ------
-    AssertionError
-        If species is not in the supported GENE_ANNOTATIONS
+        DataFrame containing sample or project metadata
     """
 
-    assert species in GENE_ANNOTATIONS
-    url = (
-        f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/"
-        f"metadata/{srp[-2:]}/{srp}/sra.sra.{srp}.MD.gz"
-    )
-    sample_anno = pd.read_csv(url, delimiter="\t", index_col="external_id")
-    return sample_anno
+    return pd.read_csv(url, delimiter="\t", index_col="external_id")
+
+
+def split_attributes(attr_string):
+    """Split a sample attributes string into a dictionary of key-value pairs.
+
+    Args:
+        attr_string (str): String containing attributes in format "key;;value|key;;value"
+
+    Returns:
+        dict: Dictionary of attribute key-value pairs
+    """
+    if pd.isna(attr_string):
+        return {}
+
+    pairs = attr_string.split("|")
+    attributes = {}
+
+    for pair in pairs:
+        if ";;" in pair:
+            key, value = pair.split(";;")
+            attributes[key.strip()] = value.strip()
+
+    return attributes
 
 
 @lru_cache(maxsize=10)
-def download_project_metadata(srp: str, species: str = "mouse") -> pd.DataFrame:
+def download_sample_metadata(url: str) -> pd.DataFrame:
+    samples = download_metadata(url)
+    attributes_df = pd.DataFrame(
+        [split_attributes(row) for row in samples["sample_attributes"]],
+        index=samples.index,
+    )
+    single_value_cols = [
+        col for col in attributes_df.columns if attributes_df[col].nunique() == 1
+    ]
+    attributes_df.drop(columns=single_value_cols, inplace=True)
+    return pd.concat(
+        [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
+    )
+
+
+def extract_annotation_source(url):
     """
-    Download and parse project-level metadata for a specific SRA project.
+    Extract the gene annotation identifier from the gene summary URL
 
     Parameters
     ----------
-    srp : str
-        SRA project ID (e.g., 'SRP115307')
-    species : str, optional
-        Species name, either 'mouse' or 'human' (default: 'mouse')
+    url : str
+        The URL pointing to the recount3 sample or project metadata CSV file.
 
     Returns
     -------
-    pd.DataFrame
-        DataFrame containing project metadata with columns specific to the SRA project
-
-    Raises
-    ------
-    AssertionError
-        If species is not in the supported GENE_ANNOTATIONS
+    str
+        The gene annotation identifer (e.g. M023 or G026)
     """
-    assert species in GENE_ANNOTATIONS
-    url = (
-        f"https://duffel.rail.bio/recount3/{species}/data_sources/sra/metadata/"
-        f"{srp[-2:]}/{srp}/sra.recount_project.{srp}.MD.gz"
-    )
-    sample_anno = pd.read_csv(url, delimiter="\t", index_col="external_id")
-    return sample_anno
+    pattern = r"\.gene_sums\.[^\.]+\.([^.]+)\.gz"
+    match = re.search(pattern, url)
 
+    if match:
+        return match.group(1)
 
+  
 @lru_cache(maxsize=10)
-def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
+def download_gene_metadata(url) -> pd.DataFrame:
     """
-    Download and parse gene annotations for a specific species.
+    Download and parse gene annotations for a gene count file
 
     Parameters
     ----------
-    organism : str, optional
-        Species name, either 'Mus musculue' or 'Homo sapiens' (default: 'Mus musculus')
+    url : str
+        The URL pointing to the recount3 gene count file
 
     Returns
     -------
@@ -133,22 +141,12 @@ def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
         - gene_id: unique gene identifier
         - gene_type: type of gene
         - gene_name: common gene name
-
-    Raises
-    ------
-    KeyError
-        If species is not in the supported GENE_ANNOTATIONS
     """
+    annotation = extract_annotation_source(url)
     try:
-        species = ORGANISMS[organism]
+        species = GENE_ANNOTATIONS[annotation]
     except KeyError:
-        print(f"Organism {organism} is not available.")
-        raise
-
-    try:
-        annotation = GENE_ANNOTATIONS[species]
-    except KeyError:
-        print(f"Annotation for species {species} is not available.")
+        print(f"Annotation source {annotation} is not available.")
         raise
 
     url = (
@@ -194,6 +192,9 @@ def download_gene_metadata(organism: str = "Mus musculus") -> pd.DataFrame:
     # Drop the unnecessary columns
     gene_anno = gene_anno.drop(["attribute", "split_attribute"], axis=1)
     gene_anno.set_index('gene_id', drop=False, inplace=True)
+
+    # retain only the first row for each gene symbol
+    gene_anno.drop_duplicates(["gene_name"], inplace=True)
     return gene_anno
 
 

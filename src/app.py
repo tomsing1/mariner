@@ -13,17 +13,21 @@ def _():
     import utils
 
     from anndata import AnnData
+    from functools import lru_cache
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.default_inference import DefaultInference
     from pydeseq2.ds import DeseqStats
     from pydeseq2.preprocessing import deseq2_norm
+    from sqlalchemy import create_engine
     return (
         AnnData,
         DefaultInference,
         DeseqDataSet,
         DeseqStats,
         alt,
+        create_engine,
         deseq2_norm,
+        lru_cache,
         mo,
         np,
         pd,
@@ -32,120 +36,191 @@ def _():
 
 
 @app.cell
-def _():
-    selected_project = "SRP115307"
-    return (selected_project,)
-
-
-@app.cell
-def _(mo, selected_project, utils):
-    with mo.status.spinner(
-        subtitle=f"Downloading sample information about project {selected_project} ..."
-    ) as _spinner:
-        samples = utils.download_sample_metadata(selected_project)
-    return (samples,)
-
-
-@app.cell
-def _(pd, samples):
-    def split_attributes(attr_string):
-        """Split a sample attributes string into a dictionary of key-value pairs.
-
-        Args:
-            attr_string (str): String containing attributes in format "key;;value|key;;value"
-
-        Returns:
-            dict: Dictionary of attribute key-value pairs
-        """
-        if pd.isna(attr_string):
-            return {}
-
-        pairs = attr_string.split("|")
-        attributes = {}
-
-        for pair in pairs:
-            if ";;" in pair:
-                key, value = pair.split(";;")
-                attributes[key.strip()] = value.strip()
-
-        return attributes
-
-
-    # Apply the function to create a new dataframe with split attributes
-    attributes_df = pd.DataFrame(
-        [split_attributes(row) for row in samples["sample_attributes"]],
-        index=samples.index,
-    )
-
-    # Drop columns with constant values
-    single_value_cols = [
-        col for col in attributes_df.columns if attributes_df[col].nunique() == 1
-    ]
-    attributes_df.drop(columns=single_value_cols, inplace=True)
-    samples_expanded = pd.concat(
-        [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
-    )
-    return attributes_df, samples_expanded, single_value_cols, split_attributes
-
-
-@app.cell
-def _(mo, selected_project, utils):
-    with mo.status.spinner(
-        subtitle=f"Downloading information about project {selected_project} ..."
-    ) as _spinner:
-        project = utils.download_project_metadata(selected_project)
-    return (project,)
+def _(create_engine):
+    DATABASE_URL = "sqlite:///data/recount3.sqlite"
+    engine = create_engine(DATABASE_URL)
+    return DATABASE_URL, engine
 
 
 @app.cell
 def _(mo):
-    mo.md(r"""The project metadata contains the `organism` column, which we can used to retrieve the correct gene annotation (for mouse or human genes).""")
+    mo.md(
+        r"""
+        ## The recount3 project
+
+        [recount3](https://rna.recount.bio/) provides access to uniformly processed RNA-seq data from more than 750,000 human and mouse samples. The raw data was retrieved from public repositories, e.g.NCBI's short read archive (SRA), the Genotype-Tissue Expression (GTEx) project and The Cancer Genome Atlas (TCGA). Wilks et al described their full workflow in their [2021 Genome Research open access paper](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02533-6).
+
+        The datasets can be explored through a [custom shiny web application](https://jhubiostatistics.shinyapps.io/recount3-study-explorer/), and the companion [recount Bioconductor package](https://www.bioconductor.org/packages/release/bioc/html/recount.html) facilitates import of the data into R sessions for downstream analysis.
+
+        The processed data, including gene-level, exon-level and exon-junction counts, are available for download as CSV files, along with sample metadata available from the original repositories. 
+
+        To explore the available datasets, I have retrieved the recount3 metadata from its [github repository](https://github.com/LieberInstitute/recount3-docs/tree/master/study-explorer) and collated them in a simple SQLite database. Let's get a list of all human or mouse datasets, along with their titles and abstracts.
+
+        💡 Click on the column names to sort & filter the content, and select a row to see details about each study.
+        """
+    )
     return
 
 
 @app.cell
-def _(project):
-    organism = project.organism.unique()
-    assert len(organism) == 1
-    organism = organism[0]
-    return (organism,)
+def _(mo):
+    species_radio = mo.ui.radio(
+        options=["Human", "Mouse"], value="Human", inline=True
+    )
+    max_samples = mo.ui.range_slider(
+        start=2, stop=1000, value=[10, 200], label="Number of samples"
+    )
+    mo.hstack([species_radio, max_samples])
+    return max_samples, species_radio
 
 
 @app.cell
-def _(mo, organism, selected_project, utils):
+def _(engine, max_samples, mo, species_radio, tbl_file, tbl_project):
+    projects = mo.sql(
+        f"""
+        SELECT 
+            prj.project AS project, 
+            study_title AS title, 
+            study_abstract AS abstract,
+            fil.organism AS species,
+            fil.n_samples AS n,
+            fil.gene AS gene,
+            fil.project_meta AS metadata, 
+            fil.recount_project AS samples
+        FROM tbl_project AS prj 
+        LEFT JOIN tbl_file AS fil ON prj.project = fil.project 
+        WHERE fil.organism  = '{species_radio.value.lower()}'
+        AND fil.n_samples BETWEEN {max_samples.value[0]} AND {max_samples.value[1]}
+        ORDER BY n;
+        """,
+        engine=engine,
+        output=False,
+    )
+    project_table = mo.ui.table(
+        projects[["project", "n", "title", "abstract"]],
+        selection="single",
+        initial_selection=[0],
+    )
+    project_table
+    return project_table, projects
+
+
+@app.cell
+def _(mo, tbl_file, tbl_project):
+    from dataclasses import dataclass
+    from sqlalchemy.engine.base import Engine
+
+
+    @dataclass
+    class Project:
+        """Class for keeping track of project metadata."""
+
+        project: str
+        title: str
+        abstract: str
+        species: str
+        n: int
+        genes: str
+        samples: str
+        meta: str
+
+
+    def create_project(project: str, species: str, engine: Engine):
+        project_tuple = mo.sql(
+            f"""
+            SELECT 
+                prj.project AS project, 
+                study_title AS title, 
+                study_abstract AS abstract,
+                fil.organism AS species,
+                fil.n_samples AS n,
+                fil.gene AS gene,
+                fil.project_meta AS metadata, 
+                fil.recount_project AS samples
+            FROM tbl_project AS prj 
+            LEFT JOIN tbl_file AS fil ON prj.project = fil.project 
+            WHERE fil.project  = '{project}'
+            AND fil.organism  = '{species}'
+            LIMIT 1;
+            """,
+            engine=engine,
+            output=False,
+        ).row(0)
+        return Project(*project_tuple)
+    return Engine, Project, create_project, dataclass
+
+
+@app.cell
+def _(create_project, engine, mo, project_table, species_radio):
+    if project_table.value["project"][0]:
+        proj = create_project(
+            project=project_table.value["project"][0],
+            species=species_radio.value.lower(),
+            engine=engine,
+        )
+        summary = mo.md(f"""
+        ## {proj.project}: {proj.title}
+
+        - Species: {proj.species}
+        - {proj.n} samples
+
+        {proj.abstract}
+        """)
+        run_button = mo.ui.run_button(label="Retrieve data")
+    return proj, run_button, summary
+
+
+@app.cell
+def _(mo, run_button, summary):
+    mo.vstack([summary, run_button])
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""To retrieve the gene-level counts and the available sample & gene annotations for the selected study, please click the `Retrieve data` button above.""")
+    return
+
+
+@app.cell
+def _(mo, proj, run_button, utils):
+    mo.stop(not run_button.value)
     with mo.status.spinner(
-        subtitle=f"Downloading gene annotations for project {selected_project}..."
+        subtitle=f"Downloading sample information ..."
     ) as _spinner:
-        genes = utils.download_gene_metadata(organism=organism)
-        genes = genes.set_index("gene_id", drop=False)
-    return (genes,)
-
-
-@app.cell
-def _(mo, selected_project, utils):
+        samples = utils.download_sample_metadata(proj.samples)
     with mo.status.spinner(
-        subtitle=f"Downloading raw counts for project {selected_project} ..."
+        subtitle=f"Downloading gene annotations ..."
     ) as _spinner:
-        counts = utils.download_counts(selected_project)
-    return (counts,)
+        genes = utils.download_gene_metadata(proj.genes)
+    with mo.status.spinner(
+        subtitle=f"Downloading gene-level counts ..."
+    ) as _spinner:
+        counts = utils.download_counts(proj.genes)
+    return counts, genes, samples
 
 
 @app.cell
-def _(
-    AnnData,
-    DefaultInference,
-    DeseqDataSet,
-    counts,
-    genes,
-    mo,
-    samples_expanded,
-    selected_project,
-):
-    def _(counts, samples, genes):
+def _(samples):
+    samples.columns
+    return
+
+
+@app.cell
+def _(mo, samples):
+    group = mo.ui.dropdown(
+        options=samples.columns, label="Choose condition of interest"
+    )
+    group
+    return (group,)
+
+
+@app.cell
+def _(AnnData, counts, genes, group, mo, samples):
+    def create_annData(counts, samples, genes, column):
         # subset samples by excluding missing values in the `gender` column
         metadata = samples.loc[counts.columns]
-        metadata["condition"] = metadata.gender
-        keep_samples = ~metadata.condition.isna()
+        keep_samples = ~metadata[column].isna()
         metadata = metadata.loc[keep_samples]
 
         # subset genes to those that are annotated as 'protein_coding'
@@ -156,34 +231,76 @@ def _(
         # coerce the counts data.frame to a numpy array for faster transposition
         m = counts.loc[genes.index].to_numpy().T
         m = m[keep_samples.tolist(), :]
+        adata = AnnData(X=m, obs=metadata, var=genes)
+        return adata
 
-        inference = DefaultInference(n_cpus=4)
+
+    if group.value:
+        with mo.status.spinner(subtitle=f"Created annData object ...") as _spinner:
+            adata = create_annData(counts, samples, genes, group.value)
+    return adata, create_annData
+
+
+@app.cell
+def _(adata):
+    adata
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""The project metadata contains the `organism` column, which we can used to retrieve the correct gene annotation (for mouse or human genes).""")
+    return
+
+
+@app.cell
+def _(mo):
+    fit_button = mo.ui.run_button(label="Fit DESeq2 model")
+    fit_button
+    return (fit_button,)
+
+
+@app.cell
+def _(DefaultInference, DeseqDataSet, adata, fit_button, group, mo):
+    mo.stop(not fit_button.value)
+
+
+    def fit_model(adata, design, n_cpus=4, refit_cooks=True):
+        inference = DefaultInference(n_cpus=n_cpus)
         dds = DeseqDataSet(
-            adata=AnnData(X=m, obs=metadata, var=genes),
-            design="~condition",
-            refit_cooks=True,
-            inference=inference,
+            adata=adata, design=design, refit_cooks=True, inference=inference
         )
         dds.deseq2()
         return dds
 
 
-    with mo.status.spinner(
-        subtitle=f"Fitting DESeq2 model for project {selected_project} ..."
-    ) as _spinner:
-        dds = _(counts=counts, samples=samples_expanded, genes=genes)
-    return (dds,)
+    if group.value:
+        design = f"~{group.value}"
+        with mo.status.spinner(
+            subtitle=f"Fitting DESeq2 model with design {design} ..."
+        ) as _spinner:
+            dds = fit_model(adata, design=design)
+    return dds, design, fit_model
 
 
 @app.cell
-def _(DeseqStats, dds, mo, selected_project):
-    with mo.status.spinner(
-        subtitle=f"Extracting Wald test p-values for project {selected_project} ..."
-    ) as _spinner:
-        ds = DeseqStats(
-            dds, contrast=["condition", "male", "female"], cooks_filter=True
-        )
-        ds.summary()  # creates ds.results.df
+def _(DeseqStats, adata, dds, group, mo):
+    def _():
+        with mo.status.spinner(
+            subtitle=f"Extracting Wald test p-values ..."
+        ) as _spinner:
+            levels = adata.obs[group.value].unique()
+            ds = DeseqStats(
+                dds,
+                contrast=[group.value]
+                + adata.obs[group.value].unique()[:2].tolist(),
+                cooks_filter=True,
+            )
+            ds.summary()  # creates ds.results.df
+            return ds
+
+
+    ds = _()
     return (ds,)
 
 
@@ -218,7 +335,7 @@ def _(ds, mo, pd):
         df.reset_index(drop=True),
         show_column_summaries=True,
         selection="multi",
-        initial_selection=[1],
+        initial_selection=[0],
         label="Differential expression results",
     )
     stat_table
@@ -295,10 +412,10 @@ def _(alt, pd):
 
 
 @app.cell
-def _(dds, mo):
+def _(dds, group, mo):
     covariate = mo.ui.dropdown(
         options=dds.obs_keys(),
-        value="condition" if "condition" in dds.obs_keys() else dds.obs_keys()[0],
+        value=group.value,
         label="",
     )
     normalized = mo.ui.radio(
@@ -306,7 +423,7 @@ def _(dds, mo):
     )
     markdown = mo.md(
         """
-        - x-axis?: {covariate}
+        - x-axis: {covariate}
         - y-axis: {count_type}
         """
     )
