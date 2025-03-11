@@ -56,6 +56,15 @@ def download_metadata(url: str) -> pd.DataFrame:
     return pd.read_csv(url, delimiter="\t", index_col="external_id")
 
 
+def clean_column_names(df):
+    df.columns = (df.columns
+               .str.strip()
+               .str.lower()
+               .str.replace(" ", "_")
+               .str.replace("[()€$]", "",regex=True))
+    return df
+
+  
 def split_attributes(attr_string):
     """Split a sample attributes string into a dictionary of key-value pairs.
 
@@ -90,9 +99,10 @@ def download_sample_metadata(url: str) -> pd.DataFrame:
         col for col in attributes_df.columns if attributes_df[col].nunique() == 1
     ]
     attributes_df.drop(columns=single_value_cols, inplace=True)
-    return pd.concat(
+    df = pd.concat(
         [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
     )
+    return clean_column_names(df)
 
 
 def extract_annotation_source(url):

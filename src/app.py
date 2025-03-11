@@ -201,8 +201,23 @@ def _(mo, proj, run_button, utils):
 
 
 @app.cell
-def _(samples):
-    samples.columns
+def _(mo, proj, samples):
+    sample_fields = [x for x in samples.columns if not x in ("experiment_acc")]
+    mo.md(f"""
+    The {proj.n} samples in this project are annotated with the following metadata fields:\n\n {"\n\n".join(["- " + item for item in sample_fields])}
+    """)
+    return (sample_fields,)
+
+
+@app.cell
+def _(sample_fields, samples):
+    samples[sample_fields]
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""For differential expression analysis, please choose the covariate of interest. Optionally, you may also select one or more covariates to adjust for, e.g. these variables will be included in the linear model along with the condition of interset.""")
     return
 
 
@@ -213,6 +228,34 @@ def _(mo, samples):
     )
     group
     return (group,)
+
+
+@app.cell
+def _(group, mo, samples):
+    adjust_for = mo.ui.dropdown(
+        options=[x for x in samples.columns if x != group.value],
+        label="Choose covariates to adjust for",
+    )
+    adjust_for
+    return (adjust_for,)
+
+
+@app.cell
+def _(adjust_for, group):
+    if group.value:
+        design = f"~{group.value}"
+        if adjust_for.value:
+            design = " + ".join([f"~{group.value}", adjust_for.value])
+    return (design,)
+
+
+@app.cell
+def _(design, mo):
+    mo.md(
+        f"""Great! Please click the button below to fit a DESeq2 model to the dataset, 
+        using your chosen design:  `{design}`"""
+    )
+    return
 
 
 @app.cell
@@ -242,18 +285,6 @@ def _(AnnData, counts, genes, group, mo, samples):
 
 
 @app.cell
-def _(adata):
-    adata
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md(r"""The project metadata contains the `organism` column, which we can used to retrieve the correct gene annotation (for mouse or human genes).""")
-    return
-
-
-@app.cell
 def _(mo):
     fit_button = mo.ui.run_button(label="Fit DESeq2 model")
     fit_button
@@ -261,7 +292,49 @@ def _(mo):
 
 
 @app.cell
-def _(DefaultInference, DeseqDataSet, adata, fit_button, group, mo):
+def _(group):
+    contrast = group.value
+    return (contrast,)
+
+
+@app.cell
+def _(contrast, mo):
+    mo.md(
+        f"""Next, please select the two categorical levels of the `{contrast}` condition you would like to compare:"""
+    )
+    return
+
+
+@app.cell
+def _(adata, group, mo):
+    level_1 = mo.ui.dropdown(
+        options=adata.obs[group.value].unique(),
+        label="Numerator",
+    )
+    return (level_1,)
+
+
+@app.cell
+def _(adata, group, level_1, mo):
+    level_2 = mo.ui.dropdown(
+        options=[x for x in adata.obs[group.value].unique() if x != level_1.value],
+        label="Denominator",
+    )
+    level_selection = mo.ui.batch(
+        mo.md(
+            """
+        - Numerator: {level_1}
+        - Denominator: {level_2}
+        """
+        ),
+        {"level_1": level_1, "level_2": level_2},
+    ).form()
+    level_selection
+    return level_2, level_selection
+
+
+@app.cell
+def _(DefaultInference, DeseqDataSet, adata, design, fit_button, group, mo):
     mo.stop(not fit_button.value)
 
 
@@ -275,38 +348,40 @@ def _(DefaultInference, DeseqDataSet, adata, fit_button, group, mo):
 
 
     if group.value:
-        design = f"~{group.value}"
         with mo.status.spinner(
             subtitle=f"Fitting DESeq2 model with design {design} ..."
         ) as _spinner:
             dds = fit_model(adata, design=design)
-    return dds, design, fit_model
+    return dds, fit_model
 
 
 @app.cell
-def _(DeseqStats, adata, dds, group, mo):
-    def _():
+def _(DeseqStats, contrast, dds, level_selection, mo):
+    def _(contrast, levels):
         with mo.status.spinner(
             subtitle=f"Extracting Wald test p-values ..."
         ) as _spinner:
-            levels = adata.obs[group.value].unique()
             ds = DeseqStats(
                 dds,
-                contrast=[group.value]
-                + adata.obs[group.value].unique()[:2].tolist(),
+                contrast=[contrast] + levels,
                 cooks_filter=True,
             )
             ds.summary()  # creates ds.results.df
             return ds
 
 
-    ds = _()
-    return (ds,)
+    if level_selection.value:
+        chosen_levels = list(level_selection.value.values())
+        ds = _(contrast, chosen_levels)
+    return chosen_levels, ds
 
 
 @app.cell
-def _(mo):
-    mo.md("""### Independent filtering""")
+def _(chosen_levels, contrast, mo):
+    mo.md(f"""
+    The following table shows the differential expression results comparing 
+    `{contrast}`:`{chosen_levels[-1]}` with `{contrast}`:`{chosen_levels[-2]}`. 
+    """)
     return
 
 
@@ -409,6 +484,12 @@ def _(alt, pd):
         )
         return chart
     return facet_wrap, scatter_plot
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""To visualize the normalized or raw counts for one or more genes, please select one or more rows in the result table above, and press `Submit`.""")
+    return
 
 
 @app.cell
