@@ -56,16 +56,16 @@ def download_metadata(url: str) -> pd.DataFrame:
     return pd.read_csv(url, delimiter="\t", index_col="external_id")
 
 
+def sanitize(x: str) -> str:
+  return re.sub('[^0-9a-zA-Z]+', '_', x.strip()).strip("_")
+
+
 def clean_column_names(df):
-    df.columns = (df.columns
-               .str.strip()
-               .str.lower()
-               .str.replace(" ", "_")
-               .str.replace("[()€$]", "",regex=True))
+    df.columns = [sanitize(x) for x in df.columns]
     return df
 
   
-def split_attributes(attr_string):
+def split_attributes(attr_string: str):
     """Split a sample attributes string into a dictionary of key-value pairs.
 
     Args:
@@ -83,7 +83,7 @@ def split_attributes(attr_string):
     for pair in pairs:
         if ";;" in pair:
             key, value = pair.split(";;")
-            attributes[key.strip()] = value.strip()
+            attributes[sanitize(key)] = sanitize(value)
 
     return attributes
 
