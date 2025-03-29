@@ -6,6 +6,7 @@ app = marimo.App(width="medium")
 
 @app.cell
 def _():
+    from dataclasses import dataclass
     from functools import lru_cache
 
     import altair as alt
@@ -26,6 +27,7 @@ def _():
         DeseqDataSet,
         DeseqStats,
         alt,
+        dataclass,
         deseq2_norm,
         duckdb,
         lru_cache,
@@ -37,11 +39,11 @@ def _():
 
 
 @app.cell
-def _(duckdb, mo):
-    NOTEBOOK_LOC = mo.notebook_location()
-    DATABASE_URL = "data/recount3.db"
-    engine = duckdb.connect(DATABASE_URL)
-    return DATABASE_URL, NOTEBOOK_LOC, engine
+def _():
+    DATABASE_URL = (
+        "https://github.com/tomsing1/mariner/raw/refs/heads/main/data/recount3.db"
+    )
+    return (DATABASE_URL,)
 
 
 @app.cell
@@ -65,6 +67,20 @@ def _(mo):
 
 
 @app.cell
+def _(duckdb, mo):
+    con = duckdb.connect(database=":memory:")
+    with mo.status.spinner(
+        subtitle="Connecting to remote recount3 project database ..."
+    ) as _spinner:
+        con.sql("INSTALL httpfs;")
+        con.sql(
+            "ATTACH 'https://github.com/tomsing1/mariner/raw/refs/heads/main/data/recount3.db' "
+            "as db;"
+        )
+    return (con,)
+
+
+@app.cell
 def _(mo):
     species_radio = mo.ui.radio(
         options=["Human", "Mouse"], value="Human", inline=True
@@ -77,27 +93,28 @@ def _(mo):
 
 
 @app.cell
-def _(engine, max_samples, mo, species_radio, tbl_file, tbl_project):
+def _(con, db, max_samples, mo, species_radio, tbl_file, tbl_project):
     projects = mo.sql(
         f"""
-        SELECT 
-            prj.project AS project, 
-            study_title AS title, 
-            study_abstract AS abstract,
-            fil.organism AS species,
-            fil.n_samples AS n,
-            fil.gene AS gene,
-            fil.project_meta AS metadata, 
-            fil.recount_project AS samples
-        FROM tbl_project AS prj 
-        LEFT JOIN tbl_file AS fil ON prj.project = fil.project 
-        WHERE fil.organism  = '{species_radio.value.lower()}'
-        AND fil.n_samples BETWEEN {max_samples.value[0]} AND {max_samples.value[1]}
-        ORDER BY n;
-        """,
-        engine=engine,
+            SELECT 
+                prj.project AS project, 
+                study_title AS title, 
+                study_abstract AS abstract,
+                fil.organism AS species,
+                fil.n_samples AS n,
+                fil.gene AS gene,
+                fil.project_meta AS metadata, 
+                fil.recount_project AS samples
+            FROM db.tbl_project AS prj 
+            LEFT JOIN db.tbl_file AS fil ON prj.project = fil.project 
+            WHERE fil.organism  = '{species_radio.value.lower()}'
+            AND fil.n_samples BETWEEN {max_samples.value[0]} AND {max_samples.value[1]}
+            ORDER BY n;
+            """,
+        engine=con,
         output=False,
     )
+
     project_table = mo.ui.table(
         projects[["project", "n", "title", "abstract"]],
         selection="single",
@@ -108,12 +125,7 @@ def _(engine, max_samples, mo, species_radio, tbl_file, tbl_project):
 
 
 @app.cell
-def _(mo, tbl_file, tbl_project):
-    from dataclasses import dataclass
-
-    from sqlalchemy.engine.base import Engine
-
-
+def _(dataclass, db, duckdb, mo, tbl_file, tbl_project):
     @dataclass
     class Project:
         """Class for keeping track of project metadata."""
@@ -128,7 +140,9 @@ def _(mo, tbl_file, tbl_project):
         meta: str
 
 
-    def create_project(project: str, species: str, engine: Engine):
+    def create_project(
+        project: str, species: str, engine: duckdb.duckdb.DuckDBPyConnection
+    ):
         project_tuple = mo.sql(
             f"""
             SELECT 
@@ -140,8 +154,8 @@ def _(mo, tbl_file, tbl_project):
                 fil.gene AS gene,
                 fil.project_meta AS metadata, 
                 fil.recount_project AS samples
-            FROM tbl_project AS prj 
-            LEFT JOIN tbl_file AS fil ON prj.project = fil.project 
+            FROM db.tbl_project AS prj 
+            LEFT JOIN db.tbl_file AS fil ON prj.project = fil.project 
             WHERE fil.project  = '{project}'
             AND fil.organism  = '{species}'
             LIMIT 1;
@@ -150,16 +164,16 @@ def _(mo, tbl_file, tbl_project):
             output=False,
         ).row(0)
         return Project(*project_tuple)
-    return Engine, Project, create_project, dataclass
+    return Project, create_project
 
 
 @app.cell
-def _(create_project, engine, mo, project_table, species_radio):
+def _(con, create_project, mo, project_table, species_radio):
     if project_table.value["project"][0]:
         proj = create_project(
             project=project_table.value["project"][0],
             species=species_radio.value.lower(),
-            engine=engine,
+            engine=con,
         )
         summary = mo.md(f"""
         ## {proj.project}: {proj.title}

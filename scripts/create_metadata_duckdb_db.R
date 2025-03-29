@@ -1,9 +1,9 @@
 library(dplyr)
 library(here)
-library(RSQLite)
+library(duckdb)
 library(stringr)
 
-sqlite_file <- here::here("..", "data", "recount3.sqlite")
+db_file <- here::here("..", "data", "recount3.db")
 
 # retrieve recount3 metadata from github
 projects <- local({
@@ -56,7 +56,7 @@ files <- dplyr::inner_join(
 )
 
 # create SQLite database
-con <- dbConnect(RSQLite::SQLite(), sqlite_file)
+con <- dbConnect(duckdb::duckdb(), db_file)
 
 # add project table
 dbExecute(
@@ -69,11 +69,8 @@ dbExecute(
     "study_abstract TEXT",
     ")")
 )
-dbWriteTable(
-  con, 
-  name = "tbl_project", 
-  value = projects,
-  overwrite = TRUE)
+dbAppendTable(con, name = "tbl_project", value = projects)
+
 
 # add file table (some projects have files from both mouse and human)
 dbExecute(
@@ -81,7 +78,7 @@ dbExecute(
   paste(
     "CREATE TABLE tbl_file", 
     "(", 
-    "project TEXT PRIMARY KEY,",
+    "project TEXT,",
     "organism TEXT,",
     "annotation TEXT,",
     "file_source TEXT,",
@@ -93,17 +90,16 @@ dbExecute(
     "FOREIGN KEY(project) REFERENCES tbl_project(project)",
     ")")
 )
-dbWriteTable(
+dbAppendTable(
   con, 
   name = "tbl_file", 
-  value = files,
-  overwrite = TRUE)
+  value = files)
 dbDisconnect(con)
 
 
 # sandbox
 if (FALSE ) {
-  con <- dbConnect(RSQLite::SQLite(), sqlite_file)
+  con <- dbConnect(RSQLite::SQLite(), db_file)
   dbListTables(con)
 
   # fully joined table
