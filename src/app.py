@@ -9,6 +9,7 @@ def _():
     from functools import lru_cache
 
     import altair as alt
+    import duckdb
     import marimo as mo
     import numpy as np
     import pandas as pd
@@ -17,7 +18,6 @@ def _():
     from pydeseq2.default_inference import DefaultInference
     from pydeseq2.ds import DeseqStats
     from pydeseq2.preprocessing import deseq2_norm
-    from sqlalchemy import create_engine
 
     import utils
     return (
@@ -26,8 +26,8 @@ def _():
         DeseqDataSet,
         DeseqStats,
         alt,
-        create_engine,
         deseq2_norm,
+        duckdb,
         lru_cache,
         mo,
         np,
@@ -37,10 +37,11 @@ def _():
 
 
 @app.cell
-def _(create_engine):
-    DATABASE_URL = "sqlite:///data/recount3.sqlite"
-    engine = create_engine(DATABASE_URL)
-    return DATABASE_URL, engine
+def _(duckdb, mo):
+    NOTEBOOK_LOC = mo.notebook_location()
+    DATABASE_URL = "data/recount3.db"
+    engine = duckdb.connect(DATABASE_URL)
+    return DATABASE_URL, NOTEBOOK_LOC, engine
 
 
 @app.cell
