@@ -1,24 +1,25 @@
 import marimo
 
-__generated_with = "0.11.17"
+__generated_with = "0.11.31"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _():
+    from functools import lru_cache
+
     import altair as alt
     import marimo as mo
-    import pandas as pd
     import numpy as np
-    import utils
-
+    import pandas as pd
     from anndata import AnnData
-    from functools import lru_cache
     from pydeseq2.dds import DeseqDataSet
     from pydeseq2.default_inference import DefaultInference
     from pydeseq2.ds import DeseqStats
     from pydeseq2.preprocessing import deseq2_norm
     from sqlalchemy import create_engine
+
+    import utils
     return (
         AnnData,
         DefaultInference,
@@ -57,7 +58,7 @@ def _(mo):
         To explore the available datasets, I have retrieved the recount3 metadata from its [github repository](https://github.com/LieberInstitute/recount3-docs/tree/master/study-explorer) and collated them in a simple SQLite database. Let's get a list of all human or mouse datasets, along with their titles and abstracts.
 
         💡 Click on the column names to sort & filter the content, and select a row to see details about each study.
-        """
+        """  # noqa: E501
     )
     return
 
@@ -101,13 +102,14 @@ def _(engine, max_samples, mo, species_radio, tbl_file, tbl_project):
         selection="single",
         initial_selection=[0],
     )
-    project_table
+    project_table  # noqa B018
     return project_table, projects
 
 
 @app.cell
 def _(mo, tbl_file, tbl_project):
     from dataclasses import dataclass
+
     from sqlalchemy.engine.base import Engine
 
 
@@ -178,7 +180,12 @@ def _(mo, run_button, summary):
 
 @app.cell
 def _(mo):
-    mo.md(r"""To retrieve the gene-level counts and the available sample & gene annotations for the selected study, please click the `Retrieve data` button above.""")
+    mo.md(
+        r"""
+        To retrieve the gene-level counts and the available sample & gene annotations for 
+                  the selected study, please click the `Retrieve data` button above.
+        """
+    )
     return
 
 
@@ -186,15 +193,15 @@ def _(mo):
 def _(mo, proj, run_button, utils):
     mo.stop(not run_button.value)
     with mo.status.spinner(
-        subtitle=f"Downloading sample information ..."
+        subtitle="Downloading sample information ..."
     ) as _spinner:
         samples = utils.download_sample_metadata(proj.samples)
     with mo.status.spinner(
-        subtitle=f"Downloading gene annotations ..."
+        subtitle="Downloading gene annotations ..."
     ) as _spinner:
         genes = utils.download_gene_metadata(proj.genes)
     with mo.status.spinner(
-        subtitle=f"Downloading gene-level counts ..."
+        subtitle="Downloading gene-level counts ..."
     ) as _spinner:
         counts = utils.download_counts(proj.genes)
     return counts, genes, samples
@@ -202,9 +209,10 @@ def _(mo, proj, run_button, utils):
 
 @app.cell
 def _(mo, proj, samples):
-    sample_fields = [x for x in samples.columns if not x in ("experiment_acc")]
+    sample_fields = [x for x in samples.columns if x not in ("experiment_acc")]
     mo.md(f"""
-    The {proj.n} samples in this project are annotated with the following metadata fields:\n\n {"\n\n".join(["- " + item for item in sample_fields])}
+    The {proj.n} samples in this project are annotated with the following metadata fields:
+    \n\n {"\n\n".join(["- " + item for item in sample_fields])}
     """)
     return (sample_fields,)
 
@@ -226,7 +234,7 @@ def _(mo, run_button, samples):
     group = mo.ui.dropdown(
         options=samples.columns, label="Choose condition of interest"
     )
-    group
+    group  # noqa B018
     return (group,)
 
 
@@ -237,7 +245,7 @@ def _(group, mo, samples):
         options=[x for x in samples.columns if x != group.value],
         label="Choose covariates to adjust for",
     )
-    adjust_for
+    adjust_for  # noqa B018
     return (adjust_for,)
 
 
@@ -272,7 +280,7 @@ def _(AnnData, adjust_for, counts, genes, group, mo, samples):
         f"""Great! Please click the button below to fit a DESeq2 model to the dataset, 
         using your chosen design:  `{design}`"""
     )
-    with mo.status.spinner(subtitle=f"Created annData object ...") as _spinner:
+    with mo.status.spinner(subtitle="Created annData object ...") as _spinner:
         adata = create_annData(counts, samples, genes, group.value)
     return adata, contrast, create_annData, design
 
@@ -316,12 +324,12 @@ def _(level_1, level_2, mo):
         ),
         {"level_1": level_1, "level_2": level_2},
     ).form(submit_button_label="Fit DESeq2 model", validate=validate_form)
-    level_selection
+    level_selection  # noqa B018
     return level_selection, validate_form
 
 
 @app.cell
-def _(DefaultInference, DeseqDataSet, adata, design, level_selection, mo):
+def _(DefaultInference, DeseqDataSet, adata, design, level_selection, mo, np):
     mo.stop(not level_selection.value)
 
 
@@ -330,25 +338,48 @@ def _(DefaultInference, DeseqDataSet, adata, design, level_selection, mo):
         dds = DeseqDataSet(
             adata=adata, design=design, refit_cooks=True, inference=inference
         )
-        dds.deseq2()
-        return dds
+        try:
+            dds.deseq2()
+        except np.linalg.LinAlgError as err:
+            if "Singular matrix" in str(err):
+                return (
+                    False,
+                    "Sorry, that comparison is not possible because "
+                    "the design matrix is singular. Please choose another set of covariates.",
+                )
+        return True, dds
 
 
     with mo.status.spinner(
         subtitle=f"Fitting DESeq2 model with design {design} ..."
     ) as _spinner:
-        dds = fit_model(adata, design=design)
-    return dds, fit_model
+        fit_success, dds = fit_model(adata, design=design)
+    return dds, fit_model, fit_success
 
 
 @app.cell
-def _(DeseqStats, contrast, dds, level_selection, mo):
-    mo.stop(not level_selection.value)
+def _(dds, fit_success, mo):
+    mo.md(
+        f"{mo.icon('lucide:thumbs-up')} Successfully fit the DESeq2 model!"
+    ) if fit_success else mo.md(f"{mo.icon('lucide:triangle-alert')}" + dds)
+    return
+
+
+@app.cell
+def _(DeseqStats, contrast, dds, fit_success, level_selection, mo):
+    mo.stop(
+        not level_selection.value,
+        mo.md("**Select the numerator and denomator to compare.**"),
+    )
+
+    mo.stop(
+        not fit_success,
+    )
 
 
     def _(contrast, levels):
         with mo.status.spinner(
-            subtitle=f"Extracting Wald test p-values ..."
+            subtitle="Extracting Wald test p-values ..."
         ) as _spinner:
             ds = DeseqStats(
                 dds,
@@ -366,8 +397,10 @@ def _(DeseqStats, contrast, dds, level_selection, mo):
 
 
 @app.cell
-def _(chosen_levels, contrast, ds, level_selection, mo, pd):
-    mo.stop(not level_selection.value)
+def _(chosen_levels, contrast, ds, fit_success, mo, pd):
+    mo.stop(
+        not fit_success,
+    )
     mo.md(f"""
     The following table shows the differential expression results comparing 
     `{contrast}`:`{chosen_levels[-1]}` with `{contrast}`:`{chosen_levels[-2]}`. 
@@ -398,7 +431,7 @@ def _(chosen_levels, contrast, ds, level_selection, mo, pd):
         initial_selection=[0],
         label="Differential expression results",
     )
-    stat_table
+    stat_table  # noqa B018
     return df, stat_table
 
 
@@ -423,7 +456,7 @@ def _(alt, pd):
             gene_idx = adata.var_names.get_loc(gene)
         else:
             raise ValueError(f"Gene {gene} not found in var_names.")
-        if not covariate in adata.obs_keys():
+        if covariate not in adata.obs_keys():
             raise ValueError(f"Covariate {covariate} not found in obs_keys.")
 
         _df = pd.DataFrame(
@@ -432,7 +465,6 @@ def _(alt, pd):
                 covariate: adata.obs[covariate].values,
             }
         )
-        _df
 
         chart = (
             alt.Chart(_df)
@@ -472,7 +504,10 @@ def _(alt, pd):
 
 
 @app.cell
-def _(dds, group, mo):
+def _(dds, fit_success, group, mo):
+    mo.stop(
+        not fit_success,
+    )
     covariate = mo.ui.dropdown(
         options=dds.obs_keys(),
         value=group.value,
@@ -487,7 +522,7 @@ def _(dds, group, mo):
         rows in the result table above, and press `Submit`.
 
         Use the options below to customize the plots:
-    
+
         - x-axis: {covariate}
         - y-axis: {count_type}
         """
@@ -495,12 +530,26 @@ def _(dds, group, mo):
     batch = mo.ui.batch(
         markdown, {"covariate": covariate, "count_type": normalized}
     ).form()
-    batch
+    batch  # noqa B018
     return batch, covariate, markdown, normalized
 
 
 @app.cell
-def _(batch, dds, deseq2_norm, facet_wrap, scatter_plot, stat_table):
+def _(
+    batch,
+    dds,
+    deseq2_norm,
+    facet_wrap,
+    fit_success,
+    mo,
+    scatter_plot,
+    stat_table,
+):
+    mo.stop(
+        not fit_success,
+    )
+
+
     def _():
         adata = dds.copy()
         adata.var = adata.var.set_index("gene_name", inplace=False, drop=False)
