@@ -1,7 +1,8 @@
-import pandas as pd
 import re
 from dataclasses import dataclass
 from functools import lru_cache
+
+import pandas as pd
 
 GENE_ANNOTATIONS = {
   "M023": "mouse",
@@ -33,7 +34,6 @@ def download_counts(url:str) -> pd.DataFrame:
         DataFrame containing gene-level counts with
         one column for each run (SRR) in the dataset
     """
-
     return pd.read_csv(url, delimiter="\t", skiprows=2, index_col="gene_id")
 
 
@@ -52,27 +52,58 @@ def download_metadata(url: str) -> pd.DataFrame:
     pd.DataFrame
         DataFrame containing sample or project metadata
     """
-
     return pd.read_csv(url, delimiter="\t", index_col="external_id")
 
 
 def sanitize(x: str) -> str:
-  return re.sub('[^0-9a-zA-Z]+', '_', x.strip()).strip("_")
+    """
+    Sanitize a string by replacing non-alphanumeric characters with underscores.
+    
+    Parameters
+    ----------
+    x : str
+        The string to sanitize
+        
+    Returns
+    -------
+    str
+        The sanitized string with non-alphanumeric characters replaced by underscores
+        and leading/trailing underscores removed
+    """
+    return re.sub('[^0-9a-zA-Z]+', '_', x.strip()).strip("_")
 
 
 def clean_column_names(df):
+    """
+    Clean column names in a DataFrame by sanitizing each column name.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        DataFrame with column names to clean
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with sanitized column names
+    """
     df.columns = [sanitize(x) for x in df.columns]
     return df
 
   
 def split_attributes(attr_string: str):
-    """Split a sample attributes string into a dictionary of key-value pairs.
+    """
+    Split a sample attributes string into a dictionary of key-value pairs.
 
-    Args:
-        attr_string (str): String containing attributes in format "key;;value|key;;value"
+    Parameters
+    ----------
+    attr_string : str
+        String containing attributes in format "key;;value|key;;value"
 
-    Returns:
-        dict: Dictionary of attribute key-value pairs
+    Returns
+    -------
+    dict
+        Dictionary of attribute key-value pairs with sanitized keys and values
     """
     if pd.isna(attr_string):
         return {}
@@ -90,6 +121,23 @@ def split_attributes(attr_string: str):
 
 @lru_cache(maxsize=10)
 def download_sample_metadata(url: str) -> pd.DataFrame:
+    """
+    Download and process sample metadata for a specific SRA project.
+    
+    This function downloads sample metadata, extracts attributes from the 
+    'sample_attributes' column, and combines them with basic sample information.
+    Single-value columns (where all samples have the same value) are removed.
+    
+    Parameters
+    ----------
+    url : str
+        The URL pointing to the recount3 sample metadata CSV file
+        
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame containing processed sample metadata with cleaned column names
+    """
     samples = download_metadata(url)
     attributes_df = pd.DataFrame(
         [split_attributes(row) for row in samples["sample_attributes"]],
@@ -107,17 +155,17 @@ def download_sample_metadata(url: str) -> pd.DataFrame:
 
 def extract_annotation_source(url):
     """
-    Extract the gene annotation identifier from the gene summary URL
+    Extract the gene annotation identifier from the gene summary URL.
 
     Parameters
     ----------
     url : str
-        The URL pointing to the recount3 sample or project metadata CSV file.
+        The URL pointing to the recount3 gene counts CSV file.
 
     Returns
     -------
     str
-        The gene annotation identifer (e.g. M023 or G026)
+        The gene annotation identifier (e.g. M023 or G026)
     """
     pattern = r"\.gene_sums\.[^\.]+\.([^.]+)\.gz"
     match = re.search(pattern, url)
@@ -129,7 +177,7 @@ def extract_annotation_source(url):
 @lru_cache(maxsize=10)
 def download_gene_metadata(url) -> pd.DataFrame:
     """
-    Download and parse gene annotations for a gene count file
+    Download and parse gene annotations for a gene count file.
 
     Parameters
     ----------
@@ -164,6 +212,21 @@ def download_gene_metadata(url) -> pd.DataFrame:
         f"{species}.gene_sums.{annotation}.gtf.gz"
     )
     def extract_value(s, key):
+        """
+        Extract a value for a specific key from GTF attribute strings.
+        
+        Parameters
+        ----------
+        s : list
+            List of attribute strings
+        key : str
+            Key to extract value for
+            
+        Returns
+        -------
+        str or None
+            Extracted value or None if key not found
+        """
         for item in s:
             if key in item:
                 return item.split()[1].replace('"', "")
@@ -209,7 +272,8 @@ def download_gene_metadata(url) -> pd.DataFrame:
 
 
 def get_cache_info(cache_type: str):
-    """Get information about the cache
+    """
+    Get information about the cache.
 
     Parameters
     ----------
@@ -225,12 +289,11 @@ def get_cache_info(cache_type: str):
     ------
     ValueError
         If cache_type is not supported
-
     """
     if cache_type == "samples":
-        return download_sample_metadata.cache_info()
+        return download_metadata.cache_info()
     elif cache_type == "project":
-        return download_project_metadata.cache_info()
+        return download_metadata.cache_info()
     elif cache_type == "genes":
         return download_gene_metadata.cache_info()
     else:

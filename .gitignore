@@ -11,3 +11,4 @@ wheels/
 
 # IDE
 !.vscode/
+.Rproj.user
