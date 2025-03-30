@@ -54,11 +54,11 @@ def _(mo):
 
         [recount3](https://rna.recount.bio/) provides access to uniformly processed RNA-seq data from more than 750,000 human and mouse samples. The raw data was retrieved from public repositories, e.g.NCBI's short read archive (SRA), the Genotype-Tissue Expression (GTEx) project and The Cancer Genome Atlas (TCGA). Wilks et al described their full workflow in their [2021 Genome Research open access paper](https://genomebiology.biomedcentral.com/articles/10.1186/s13059-021-02533-6).
 
-        The datasets can be explored through a [custom shiny web application](https://jhubiostatistics.shinyapps.io/recount3-study-explorer/), and the companion [recount Bioconductor package](https://www.bioconductor.org/packages/release/bioc/html/recount.html) facilitates import of the data into R sessions for downstream analysis.
+        The datasets can be explored through a [custom shiny web application](https://jhubiostatistics.shinyapps.io/recount3-study-explorer/), and the companion [recount Bioconductor package](https://www.bioconductor.org/packages/release/bioc/html/recount.html) facilitates import of the data into R sessions for downstream analysis. The processed data, including gene-level, exon-level and exon-junction counts, are available for download as CSV files, along with sample metadata available from the original repositories. 
 
-        The processed data, including gene-level, exon-level and exon-junction counts, are available for download as CSV files, along with sample metadata available from the original repositories. 
-
-        To explore the available datasets, I have retrieved the recount3 metadata from its [github repository](https://github.com/LieberInstitute/recount3-docs/tree/master/study-explorer) and collated them in a simple SQLite database. Let's get a list of all human or mouse datasets, along with their titles and abstracts.
+        To explore the available datasets, I have retrieved the recount3 metadata from its [github repository](https://github.com/LieberInstitute/recount3-docs/tree/master/study-explorer) and collated them in a 
+        [duckdb database](https://github.com/tomsing1/mariner/raw/refs/heads/main/data/recount3.db). 
+        Let's get a list of all human or mouse datasets, along with their titles and abstracts.
 
         💡 Click on the column names to sort & filter the content, and select a row to see details about each study.
         """  # noqa: E501
@@ -225,11 +225,12 @@ def _(mo, proj, run_button, utils):
 @app.cell
 def _(mo, proj, samples):
     sample_fields = [x for x in samples.columns if x not in ("experiment_acc")]
-    mo.md(f"""
-    The {proj.n} samples in this project are annotated with the following metadata fields:
-    \n\n {"\n\n".join(["- " + item for item in sample_fields])}
-    """)
-    return (sample_fields,)
+    sample_fields_string = "\n\n".join(["- " + item for item in sample_fields])
+    mo.md(
+        f"""The {proj.n} samples in this project are annotated with the following metadata fields:
+        \n{sample_fields_string}"""
+    )
+    return sample_fields, sample_fields_string
 
 
 @app.cell
