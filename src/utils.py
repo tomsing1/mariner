@@ -4,14 +4,13 @@ from functools import lru_cache
 
 import pandas as pd
 
-GENE_ANNOTATIONS = {
-  "M023": "mouse",
-  "G026": "human"
-}
+GENE_ANNOTATIONS = {"M023": "mouse", "G026": "human"}
+
 
 @dataclass
 class Project:
     """Class for keeping track of project metadata."""
+
     id: str
     count_url: str
     sample_url: str
@@ -19,7 +18,7 @@ class Project:
 
 
 @lru_cache(maxsize=5)
-def download_counts(url:str) -> pd.DataFrame:
+def download_counts(url: str) -> pd.DataFrame:
     """
     Download and raw counts for a specific SRA project.
 
@@ -58,30 +57,30 @@ def download_metadata(url: str) -> pd.DataFrame:
 def sanitize(x: str) -> str:
     """
     Sanitize a string by replacing non-alphanumeric characters with underscores.
-    
+
     Parameters
     ----------
     x : str
         The string to sanitize
-        
+
     Returns
     -------
     str
         The sanitized string with non-alphanumeric characters replaced by underscores
         and leading/trailing underscores removed
     """
-    return re.sub('[^0-9a-zA-Z]+', '_', x.strip()).strip("_")
+    return re.sub("[^0-9a-zA-Z]+", "_", x.strip()).strip("_")
 
 
 def clean_column_names(df):
     """
     Clean column names in a DataFrame by sanitizing each column name.
-    
+
     Parameters
     ----------
     df : pd.DataFrame
         DataFrame with column names to clean
-        
+
     Returns
     -------
     pd.DataFrame
@@ -90,7 +89,7 @@ def clean_column_names(df):
     df.columns = [sanitize(x) for x in df.columns]
     return df
 
-  
+
 def split_attributes(attr_string: str):
     """
     Split a sample attributes string into a dictionary of key-value pairs.
@@ -123,16 +122,16 @@ def split_attributes(attr_string: str):
 def download_sample_metadata(url: str) -> pd.DataFrame:
     """
     Download and process sample metadata for a specific SRA project.
-    
-    This function downloads sample metadata, extracts attributes from the 
+
+    This function downloads sample metadata, extracts attributes from the
     'sample_attributes' column, and combines them with basic sample information.
     Single-value columns (where all samples have the same value) are removed.
-    
+
     Parameters
     ----------
     url : str
         The URL pointing to the recount3 sample metadata CSV file
-        
+
     Returns
     -------
     pd.DataFrame
@@ -143,13 +142,9 @@ def download_sample_metadata(url: str) -> pd.DataFrame:
         [split_attributes(row) for row in samples["sample_attributes"]],
         index=samples.index,
     )
-    single_value_cols = [
-        col for col in attributes_df.columns if attributes_df[col].nunique() == 1
-    ]
+    single_value_cols = [col for col in attributes_df.columns if attributes_df[col].nunique() == 1]
     attributes_df.drop(columns=single_value_cols, inplace=True)
-    df = pd.concat(
-        [samples[["experiment_acc", "sample_title"]], attributes_df], axis=1
-    )
+    df = pd.concat([samples[["experiment_acc", "sample_title"]], attributes_df], axis=1)
     return clean_column_names(df)
 
 
@@ -173,7 +168,7 @@ def extract_annotation_source(url):
     if match:
         return match.group(1)
 
-  
+
 @lru_cache(maxsize=10)
 def download_gene_metadata(url) -> pd.DataFrame:
     """
@@ -211,17 +206,18 @@ def download_gene_metadata(url) -> pd.DataFrame:
         f"https://duffel.rail.bio/recount3/{species}/annotations/gene_sums/"
         f"{species}.gene_sums.{annotation}.gtf.gz"
     )
+
     def extract_value(s, key):
         """
         Extract a value for a specific key from GTF attribute strings.
-        
+
         Parameters
         ----------
         s : list
             List of attribute strings
         key : str
             Key to extract value for
-            
+
         Returns
         -------
         str or None
@@ -247,7 +243,7 @@ def download_gene_metadata(url) -> pd.DataFrame:
             "strand",
             "frame",
             "attribute",
-        ]
+        ],
     )
 
     # First split the attribute column into a list
@@ -264,7 +260,7 @@ def download_gene_metadata(url) -> pd.DataFrame:
 
     # Drop the unnecessary columns
     gene_anno = gene_anno.drop(["attribute", "split_attribute"], axis=1)
-    gene_anno.set_index('gene_id', drop=False, inplace=True)
+    gene_anno.set_index("gene_id", drop=False, inplace=True)
 
     # retain only the first row for each gene symbol
     gene_anno.drop_duplicates(["gene_name"], inplace=True)
