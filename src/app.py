@@ -21,7 +21,6 @@ def _():
     from pydeseq2.preprocessing import deseq2_norm
 
     import utils
-
     return (
         AnnData,
         DefaultInference,
@@ -41,7 +40,9 @@ def _():
 
 @app.cell
 def _():
-    DATABASE_URL = "https://github.com/tomsing1/mariner/raw/refs/heads/main/data/recount3.db"
+    DATABASE_URL = (
+        "https://github.com/tomsing1/mariner/raw/refs/heads/main/data/recount3.db"
+    )
     return (DATABASE_URL,)
 
 
@@ -81,8 +82,12 @@ def _(duckdb, mo):
 
 @app.cell
 def _(mo):
-    species_radio = mo.ui.radio(options=["Human", "Mouse"], value="Human", inline=True)
-    max_samples = mo.ui.range_slider(start=2, stop=1000, value=[10, 200], label="Number of samples")
+    species_radio = mo.ui.radio(
+        options=["Human", "Mouse"], value="Human", inline=True
+    )
+    max_samples = mo.ui.range_slider(
+        start=2, stop=1000, value=[10, 200], label="Number of samples"
+    )
     mo.hstack([species_radio, max_samples])
     return max_samples, species_radio
 
@@ -134,7 +139,10 @@ def _(dataclass, db, duckdb, mo, tbl_file, tbl_project):
         samples: str
         meta: str
 
-    def create_project(project: str, species: str, engine: duckdb.duckdb.DuckDBPyConnection):
+
+    def create_project(
+        project: str, species: str, engine: duckdb.duckdb.DuckDBPyConnection
+    ):
         project_tuple = mo.sql(
             f"""
             SELECT 
@@ -156,7 +164,6 @@ def _(dataclass, db, duckdb, mo, tbl_file, tbl_project):
             output=False,
         ).row(0)
         return Project(*project_tuple)
-
     return Project, create_project
 
 
@@ -200,11 +207,17 @@ def _(mo):
 @app.cell
 def _(mo, proj, run_button, utils):
     mo.stop(not run_button.value)
-    with mo.status.spinner(subtitle="Downloading sample information ...") as _spinner:
+    with mo.status.spinner(
+        subtitle="Downloading sample information ..."
+    ) as _spinner:
         samples = utils.download_sample_metadata(proj.samples)
-    with mo.status.spinner(subtitle="Downloading gene annotations ...") as _spinner:
+    with mo.status.spinner(
+        subtitle="Downloading gene annotations ..."
+    ) as _spinner:
         genes = utils.download_gene_metadata(proj.genes)
-    with mo.status.spinner(subtitle="Downloading gene-level counts ...") as _spinner:
+    with mo.status.spinner(
+        subtitle="Downloading gene-level counts ..."
+    ) as _spinner:
         counts = utils.download_counts(proj.genes)
     return counts, genes, samples
 
@@ -234,7 +247,9 @@ def _(mo, run_button, samples):
         "Optionally, you may also select one or more covariates to adjust for, e.g. "
         "these variables will be included in the linear model along with the condition of interest."
     )
-    group = mo.ui.dropdown(options=samples.columns, label="Choose condition of interest")
+    group = mo.ui.dropdown(
+        options=samples.columns, label="Choose condition of interest"
+    )
     group  # noqa B018
     return (group,)
 
@@ -258,6 +273,7 @@ def _(AnnData, adjust_for, counts, genes, group, mo, samples):
     if adjust_for.value:
         design = " + ".join([f"~{group.value}", adjust_for.value])
 
+
     def create_annData(counts, samples, genes, column):
         # subset samples by excluding missing values in the `gender` column
         metadata = samples.loc[counts.columns]
@@ -274,6 +290,7 @@ def _(AnnData, adjust_for, counts, genes, group, mo, samples):
         m = m[keep_samples.tolist(), :]
         adata = AnnData(X=m, obs=metadata, var=genes)
         return adata
+
 
     mo.md(
         f"""Great! Please click the button below to fit a DESeq2 model to the dataset, 
@@ -313,6 +330,7 @@ def _(level_1, level_2, mo):
             return "Please select the denominator of interest."
         return None
 
+
     level_selection = mo.ui.batch(
         mo.md(
             """
@@ -330,9 +348,12 @@ def _(level_1, level_2, mo):
 def _(DefaultInference, DeseqDataSet, adata, design, level_selection, mo, np):
     mo.stop(not level_selection.value)
 
+
     def fit_model(adata, design, n_cpus=4, refit_cooks=True):
         inference = DefaultInference(n_cpus=n_cpus)
-        dds = DeseqDataSet(adata=adata, design=design, refit_cooks=True, inference=inference)
+        dds = DeseqDataSet(
+            adata=adata, design=design, refit_cooks=True, inference=inference
+        )
         try:
             dds.deseq2()
         except np.linalg.LinAlgError as err:
@@ -344,7 +365,10 @@ def _(DefaultInference, DeseqDataSet, adata, design, level_selection, mo, np):
                 )
         return True, dds
 
-    with mo.status.spinner(subtitle=f"Fitting DESeq2 model with design {design} ...") as _spinner:
+
+    with mo.status.spinner(
+        subtitle=f"Fitting DESeq2 model with design {design} ..."
+    ) as _spinner:
         fit_success, dds = fit_model(adata, design=design)
     return dds, fit_model, fit_success
 
@@ -368,8 +392,11 @@ def _(DeseqStats, contrast, dds, fit_success, level_selection, mo):
         not fit_success,
     )
 
+
     def _(contrast, levels):
-        with mo.status.spinner(subtitle="Extracting Wald test p-values ...") as _spinner:
+        with mo.status.spinner(
+            subtitle="Extracting Wald test p-values ..."
+        ) as _spinner:
             ds = DeseqStats(
                 dds,
                 contrast=[contrast] + levels,
@@ -377,6 +404,7 @@ def _(DeseqStats, contrast, dds, fit_success, level_selection, mo):
             )
             ds.summary()  # creates ds.results.df
             return ds
+
 
     if level_selection.value:
         chosen_levels = list(level_selection.value.values())
@@ -426,7 +454,10 @@ def _(chosen_levels, contrast, ds, fit_success, mo, pd):
 @app.cell(hide_code=True)
 def _(alt, pd):
     def facet_wrap(subplts, plots_per_row):
-        rows = [subplts[i : i + plots_per_row] for i in range(0, len(subplts), plots_per_row)]
+        rows = [
+            subplts[i : i + plots_per_row]
+            for i in range(0, len(subplts), plots_per_row)
+        ]
         compound_chart = alt.hconcat()
         for r in rows:
             rowplot = alt.vconcat()  # start a new row
@@ -434,6 +465,7 @@ def _(alt, pd):
                 rowplot |= item  # add suplot to current row as a new column
             compound_chart &= rowplot  # add the entire row of plots as a new row
         return compound_chart
+
 
     def scatter_plot(adata, gene, covariate, jitter_scale=(-1, 2)):
         if gene in adata.var_names:
@@ -470,7 +502,9 @@ def _(alt, pd):
                         titleFontSize=14,
                     ),
                 ),
-                xOffset=alt.XOffset("jitter:Q", scale=alt.Scale(domain=jitter_scale)),
+                xOffset=alt.XOffset(
+                    "jitter:Q", scale=alt.Scale(domain=jitter_scale)
+                ),
                 color=alt.Color(f"{covariate}:N", legend=None),
             )
             .transform_calculate(jitter="random()")
@@ -482,7 +516,6 @@ def _(alt, pd):
             # .configure_title(fontSize=24)
         )
         return chart
-
     return facet_wrap, scatter_plot
 
 
@@ -496,7 +529,9 @@ def _(dds, fit_success, group, mo):
         value=group.value,
         label="",
     )
-    normalized = mo.ui.radio(options=["Normalized", "Raw"], value="Normalized", inline=True)
+    normalized = mo.ui.radio(
+        options=["Normalized", "Raw"], value="Normalized", inline=True
+    )
     markdown = mo.md(
         """
         To visualize the normalized or raw counts for one or more genes, please select one or more
@@ -508,7 +543,9 @@ def _(dds, fit_success, group, mo):
         - y-axis: {count_type}
         """
     )
-    batch = mo.ui.batch(markdown, {"covariate": covariate, "count_type": normalized}).form()
+    batch = mo.ui.batch(
+        markdown, {"covariate": covariate, "count_type": normalized}
+    ).form()
     batch  # noqa B018
     return batch, covariate, markdown, normalized
 
@@ -528,6 +565,7 @@ def _(
         not fit_success,
     )
 
+
     def _():
         adata = dds.copy()
         adata.var = adata.var.set_index("gene_name", inplace=False, drop=False)
@@ -535,10 +573,13 @@ def _(
             if batch.value["count_type"] == "Normalized":
                 adata.X = deseq2_norm(adata.X)[0]
             ps = [
-                scatter_plot(adata=adata, gene=g, covariate=batch.value["covariate"])
+                scatter_plot(
+                    adata=adata, gene=g, covariate=batch.value["covariate"]
+                )
                 for g in stat_table.value["gene_name"]
             ]
             return facet_wrap(ps, 3)
+
 
     _()
     return

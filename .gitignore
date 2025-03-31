@@ -12,3 +12,6 @@ wheels/
 # IDE
 !.vscode/
 .Rproj.user
+
+# Mac OS
+.DS_Store
