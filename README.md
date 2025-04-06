@@ -66,19 +66,22 @@ The notebook allows users to
    uv run marimo run src/app.py
    ```
 
-## Deployment
+## Deployment via Docker
 
-### Docker
+A pre-built docker image is available from [dockerhub](https://hub.docker.com/r/tomsing1/mariner):
 
-To run the application via `docker`, first build a custom docker image using the
-`Dockerfile`, and then run a container:
+  ```bash
+  docker pull tomsing1/mariner
+  docker run -p 8080:8080 --rm -it tomsing1/mariner
+  ```
+You can reach the application at [localhost:8080](localhost:8080).
+
+Alternatively, you can build the docker image yourself:
 
   ```bash
   docker build -t tomsing1/mariner .
   docker run -p 8080:8080 --rm -it tomsing1/mariner
   ```
-
-You can reach the application at [localhost:8080](localhost:8080).
 
 ## Known limitations
 
