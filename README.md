@@ -74,8 +74,8 @@ To run the application via `docker`, first build a custom docker image using the
 `Dockerfile`, and then run a container:
 
   ```bash
-  docker build -t mariner .
-  docker run -p 8080:8080 --rm -it mariner
+  docker build -t tomsing1/mariner .
+  docker run -p 8080:8080 --rm -it tomsing1/mariner
   ```
 
 You can reach the application at [localhost:8080](localhost:8080).
